@@ -1,0 +1,177 @@
+//PMSM motor control process
+	module PMSMCtl( 
+	clk,
+	clk1,
+	FLT_UN,			//Fault signal input U
+	FLT_VN,			//Fault signal input V
+	FLT_WN,			//Fault signal input W
+	HW_PHASE_OverCurrent,//Hardware Phase Over Current signal input
+	HW_BUS_OverVoltage,	 //Hardware Bus Over Voltage signal input
+	PMSM1AH_IN,	//Phase A top control signal input	
+	PMSM1AL_IN,	//Phase A bottom control signal input
+	PMSM1BH_IN,	//Phase B top control signal input
+	PMSM1BL_IN,	//Phase B bottom control signal input
+	PMSM1CH_IN,	//Phase C top control signal input
+	PMSM1CL_IN,	//Phase C bottom control signal input
+	RST_CPLD,		//Reset CPLD program input
+	PMSM1AH_OUT,	//Phase A top control signal output
+	PMSM1AL_OUT,	//Phase A bottom control signal output
+	PMSM1BH_OUT,	//Phase B top control signal output
+	PMSM1BL_OUT,	//Phase B bottom control signal output
+	PMSM1CH_OUT,	//Phase C top control signal output
+	PMSM1CL_OUT,	//Phase C bottom control signal output
+	HWOV_Out,		//Bus Over Voltage Flag 
+	HWOC_Out,		//Phase Over Current Flag
+	DriverFault_Out,//IGBT Drivers Fault Flag
+	LED1,
+	LED2,
+	LED3);
+	
+	input	clk;
+	input	clk1;
+	input	FLT_UN;
+	input	FLT_VN;
+	input	FLT_WN;
+	input	HW_PHASE_OverCurrent;
+	input	HW_BUS_OverVoltage;
+	input	PMSM1AH_IN;
+	input	PMSM1AL_IN;
+	input	PMSM1BH_IN;
+	input	PMSM1BL_IN;
+	input	PMSM1CH_IN;
+	input	PMSM1CL_IN;
+	input   RST_CPLD;
+	output	PMSM1AH_OUT;
+	output	PMSM1AL_OUT;
+	output	PMSM1BH_OUT;
+	output	PMSM1BL_OUT;
+	output	PMSM1CH_OUT;
+	output	PMSM1CL_OUT;
+	output  HWOV_Out;
+	output  HWOC_Out;
+	output  DriverFault_Out;
+	output	LED1;
+	output	LED2;
+	output	LED3;
+	
+	wire    Err_Vol;
+	wire	Err_Cur;
+	wire	Err_Driver;
+	wire    Err_All;
+
+	reg     Protect_Clz;
+	reg     Protect_LowSC;
+	reg     Voltage_Err;
+	reg	Current_Err;
+	reg     Driver_Err;
+	
+	initial
+		begin
+			Protect_Clz = 0;
+			Protect_LowSC = 0;
+			Voltage_Err = 0;
+			Current_Err = 0;
+			Driver_Err = 0;
+		end
+	
+	assign  Err_Vol = HW_BUS_OverVoltage;     		//Voltage Error
+	assign  Err_Cur = HW_PHASE_OverCurrent;	   		//Current Error
+	assign  Err_Driver = (!FLT_UN)&&(!FLT_VN)&&(!FLT_WN);    //IGBT fault 1 for Error
+	assign  Err_All = Err_Vol&&Err_Cur&&Err_Driver; //Whole error
+	
+	//Control signal output
+	assign	PMSM1AH_OUT = Protect_Clz&&PMSM1AH_IN&&(Protect_LowSC);
+	assign	PMSM1BH_OUT = Protect_Clz&&PMSM1BH_IN&&(Protect_LowSC);
+	assign	PMSM1CH_OUT = Protect_Clz&&PMSM1CH_IN&&(Protect_LowSC);
+	
+	assign	PMSM1AL_OUT = Protect_Clz&&PMSM1AL_IN||(!Protect_LowSC);
+	assign	PMSM1BL_OUT = Protect_Clz&&PMSM1BL_IN||(!Protect_LowSC);
+	assign	PMSM1CL_OUT = Protect_Clz&&PMSM1CL_IN||(!Protect_LowSC);
+	
+	assign	LED1 = !Voltage_Err;
+	assign	LED2 = !Current_Err;
+	assign	LED3 = !Driver_Err;
+	
+	assign  HWOV_Out = Voltage_Err;
+	assign	HWOC_Out = Current_Err;
+	assign  DriverFault_Out = Driver_Err;
+	
+	always @( negedge Err_All or negedge RST_CPLD )
+		begin
+			if( (!Err_All) )	//Error
+				begin
+					if(!Err_Vol) //Over Voltage Error
+						begin
+							Protect_LowSC = 0;
+							Voltage_Err = 0;
+						end
+					/*else
+						begin
+							Protect_LowSC = 1;
+							Voltage_Err = 1;
+						end*/
+						
+					/*if((Err_Cur)&&(Err_Driver)) //not this two types of error
+						begin
+							Protect_Clz = 1;
+							Current_Err = 1;
+							Driver_Err = 1;
+						end
+					else
+						begin*/
+						if( (!Err_Cur) )
+							begin
+								Protect_Clz = 0;
+								Current_Err = 0;
+							end
+						/*else
+							begin
+								Protect_Clz = 1;
+								Current_Err = 1;
+							end*/							
+						if( (!Err_Driver) )
+							begin
+								Protect_Clz = 0;
+								Driver_Err = 0;
+							end
+						/*else
+							begin
+								Protect_Clz = 1;
+								Driver_Err = 1;
+							end*/
+				end
+			else	//Clear error
+				begin
+					Protect_Clz = 1;
+					Protect_LowSC = 1;
+					
+					Voltage_Err = 1;
+					Current_Err = 1;
+					Driver_Err = 1;
+				end
+		end
+					
+endmodule
+
+/*
+简单来说一下这个程序的目的：
+    输入有几个错误，这些错误组合（assign）之后给Err_Vol、Err_Cur、Err_Driver这三个wire变量（对应三大类错误），这三个大错误逻辑与之后是Err_All，是总的错误，即有任何一个小错误出现，都会使Err_All以及对应的大错误变成0.
+    还有几个reg变量，Voltage_Err、Current_Err、Driver_Err用来在错误消除后保存错误，并赋给LED指示灯，Protect_Clz、Protect_LowSC是根据错误类型进行不同的保护措施，这两个变量最终和PWM信号进行逻辑组合来输出PWM。
+    前面都没有问题，主要是后面的always @( negedge Err_All or negedge RST_CPLD ),我的理解是当Err_All或RST_CPLD下降沿的时候会触发下面的语句，并且执行一次。如果没有错误，则通过RST_CPLD复位信号可以给几个reg变量赋1，可以认为是初始化，处于无故障的正常运行状态。然后一旦有任何错误，Err_All会出现下降沿，再次触发事件，然后根据错误类型做出相应的动作（if( (!Err_All) )下面）。
+    例如这里：if(!Err_Vol) //Over Voltage Error
+		begin
+			Protect_LowSC = 0;
+			Voltage_Err = 0;
+		end
+		else
+		begin
+			Protect_LowSC = 1;
+			Voltage_Err = 1;
+		end
+    在Err_Vol错误来之后的瞬间会走完这两句，Protect_LowSC和Voltage_Err都变为0，即使Err_Vol错误消失，由于Err_All变为1，没有下降沿触发，所以Protect_LowSC和Voltage_Err还是会保持0。
+    但实际测试的情况时，Err_Vol消失之后Voltage_Err和Protect_LowSC就又恢复成1了。其他错误也是如此。
+    当屏蔽掉else中的复位操作后就正常了，即上面程序中屏蔽后的样子。
+
+    但是屏蔽之后的程序虽然可以保存历史错误了，但是按照程序的逻辑，如果在RST_CPLD下降沿来临之前就有Err_Vol，Err_Driver和Err_Cur都没有，那触发之后就不会进最后的对所有reg赋1的程序段，那么Err_Driver和Err_Cur对应的保留错误reg变量Driver_Err 和 Current_Err 也还是会保持initial时的状态，即也都为0.（即，只有一个错误，但是另外两个错误也不会复位，都会报出来）。
+    然而，测试发现并不是这种现象，还是会报出实际有的错误来。和我理解的不同。
+*/
